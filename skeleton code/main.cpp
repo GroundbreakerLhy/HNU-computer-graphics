@@ -21,9 +21,34 @@ Type your name and student ID here
 
 // 全局变量 - 对象变换控制
 GLint programID;
-glm::vec3 objectPosition = glm::vec3(0.0f, 0.0f, -5.0f);
-glm::vec3 objectRotation = glm::vec3(0.0f, 0.0f, 0.0f);
-float objectScale = 1.0f;
+
+// 添加选中对象状态跟踪
+enum SelectedObject {
+    NONE = -1,
+    SQUARE = 0,
+    CUBE = 1,
+    PYRAMID = 2
+};
+
+// 定义每个对象的变换参数
+struct ObjectTransform {
+    glm::vec3 position;
+    glm::vec3 rotation;
+    float scale;
+};
+
+// 当前选中的对象
+SelectedObject selectedObject = NONE;
+
+// 对象变换参数
+ObjectTransform objectTransforms[3] = {
+    // 矩形 
+    { glm::vec3(-1.5f, 0.0f, -5.0f), glm::vec3(0.0f), 1.0f },
+    // 立方体
+    { glm::vec3(0.0f, 0.0f, -5.0f), glm::vec3(0.0f), 1.0f },
+    // 金字塔
+    { glm::vec3(1.5f, 0.0f, -5.0f), glm::vec3(0.0f), 1.0f }
+};
 
 // 对象VAO ID
 GLuint squareVAO, cubeVAO, pyramidVAO;
@@ -233,24 +258,38 @@ void sendDataToOpenGL() {
     // 3. 创建3D金字塔
     float pyramidVertices[] = {
         // 底部正方形
-        -0.5f, -0.5f, -0.5f,   0.5f, 0.5f, 0.0f,
-         0.5f, -0.5f, -0.5f,   0.5f, 0.5f, 0.0f,
-         0.5f, -0.5f,  0.5f,   0.5f, 0.5f, 0.0f,
-        -0.5f, -0.5f,  0.5f,   0.5f, 0.5f, 0.0f,
+        -0.5f, -0.5f, -0.5f,   0.5f, 0.5f, 0.0f,  // 0
+         0.5f, -0.5f, -0.5f,   0.5f, 0.5f, 0.0f,  // 1
+         0.5f, -0.5f,  0.5f,   0.5f, 0.5f, 0.0f,  // 2
+        -0.5f, -0.5f,  0.5f,   0.5f, 0.5f, 0.0f,  // 3
         // 顶点
-         0.0f,  0.5f,  0.0f,   1.0f, 1.0f, 0.0f
+         0.0f,  0.5f,  0.0f,   1.0f, 1.0f, 0.0f   // 4
     };
-    
-    // 直接绘制，不使用索引
-    
+
+    unsigned int pyramidIndices[] = {
+        // 底面
+        0, 1, 2,
+        2, 3, 0,
+        // 侧面
+        0, 1, 4,  // 前侧面
+        1, 2, 4,  // 右侧面 
+        2, 3, 4,  // 后侧面
+        3, 0, 4   // 左侧面
+    };
+
     glGenVertexArrays(1, &pyramidVAO);
     glBindVertexArray(pyramidVAO);
-    
-    GLuint pyramidVBO;
+
+    GLuint pyramidVBO, pyramidEBO;
     glGenBuffers(1, &pyramidVBO);
     glBindBuffer(GL_ARRAY_BUFFER, pyramidVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(pyramidVertices), pyramidVertices, GL_STATIC_DRAW);
-    
+
+    // 创建EBO并绑定
+    glGenBuffers(1, &pyramidEBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, pyramidEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(pyramidIndices), pyramidIndices, GL_STATIC_DRAW);
+
     // 顶点位置
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
@@ -263,6 +302,73 @@ void sendDataToOpenGL() {
 }
 
 void renderControlInstructions(); // 添加前置声明
+
+// 射线-物体相交检测
+bool checkRayObjIntersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
+                            const glm::vec3& objPos, float objScale, float& distance) {
+    // 简化的碰撞箱检测
+    float radius = objScale * 0.5f;
+    glm::vec3 oc = rayOrigin - objPos;
+    
+    float a = glm::dot(rayDir, rayDir);
+    float b = 2.0f * glm::dot(oc, rayDir);
+    float c = glm::dot(oc, oc) - radius * radius;
+    float discriminant = b * b - 4 * a * c;
+    
+    if (discriminant < 0) {
+        return false;
+    } else {
+        distance = (-b - sqrt(discriminant)) / (2.0f * a);
+        return (distance > 0);
+    }
+}
+
+// 添加鼠标点击回调
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        // 获取鼠标在窗口中的位置
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
+        
+        // 将屏幕坐标转换为NDC坐标
+        int width, height;
+        glfwGetWindowSize(window, &width, &height);
+        
+        float x = (2.0f * xpos) / width - 1.0f;
+        float y = 1.0f - (2.0f * ypos) / height;
+        
+        // 创建从屏幕到世界的射线
+        glm::vec4 rayClip = glm::vec4(x, y, -1.0f, 1.0f);
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 20.0f);
+        glm::mat4 view = glm::mat4(1.0f);
+        
+        glm::vec4 rayEye = glm::inverse(projection) * rayClip;
+        rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0f, 0.0f);
+        
+        glm::vec3 rayWorld = glm::vec3(glm::inverse(view) * rayEye);
+        rayWorld = glm::normalize(rayWorld);
+        
+        glm::vec3 rayOrigin = glm::vec3(0.0f, 0.0f, 0.0f);
+        
+        // 检测射线与每个对象的相交
+        float minDist = FLT_MAX;
+        int closestObj = -1;
+        
+        for (int i = 0; i < 3; i++) {
+            float dist;
+            if (checkRayObjIntersection(rayOrigin, rayWorld, objectTransforms[i].position, 
+                                        objectTransforms[i].scale, dist)) {
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestObj = i;
+                }
+            }
+        }
+        
+        // 更新选中的对象
+        selectedObject = (closestObj >= 0) ? static_cast<SelectedObject>(closestObj) : NONE;
+    }
+}
 
 void paintGL(void) {
     // 清除颜色缓冲和深度缓冲
@@ -279,51 +385,83 @@ void paintGL(void) {
     GLint viewLoc = glGetUniformLocation(programID, "view");
     glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
     
-    // 绘制2D矩形
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, objectPosition + glm::vec3(-1.5f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(objectScale));
-    
-    GLint modelLoc = glGetUniformLocation(programID, "model");
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-    
-    glBindVertexArray(squareVAO);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    // 绘制2D矩形，高亮选中的对象
+    {
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, objectTransforms[SQUARE].position);
+        model = glm::rotate(model, glm::radians(objectTransforms[SQUARE].rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[SQUARE].rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[SQUARE].rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, glm::vec3(objectTransforms[SQUARE].scale));
+        
+        // 如果是选中的对象，提供视觉反馈
+        if (selectedObject == SQUARE) {
+            // 设置边界颜色或其他视觉指示
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 1);
+        } else {
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 0);
+        }
+        
+        GLint modelLoc = glGetUniformLocation(programID, "model");
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        
+        glBindVertexArray(squareVAO);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
     
     // 绘制3D立方体
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, objectPosition);
-    model = glm::rotate(model, glm::radians(objectRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(objectScale));
-    
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-    
-    glBindVertexArray(cubeVAO);
-    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    {
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, objectTransforms[CUBE].position);
+        model = glm::rotate(model, glm::radians(objectTransforms[CUBE].rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[CUBE].rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[CUBE].rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, glm::vec3(objectTransforms[CUBE].scale));
+        
+        // 如果是选中的对象，提供视觉反馈
+        if (selectedObject == CUBE) {
+            // 设置边界颜色或其他视觉指示
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 1);
+        } else {
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 0);
+        }
+        
+        GLint modelLoc = glGetUniformLocation(programID, "model");
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        
+        glBindVertexArray(cubeVAO);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    }
     
     // 绘制3D金字塔
-    model = glm::mat4(1.0f);
-    model = glm::translate(model, objectPosition + glm::vec3(1.5f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, glm::radians(objectRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(objectScale));
-    
-    glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-    
-    glBindVertexArray(pyramidVAO);
-    // 绘制金字塔底面
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    // 绘制金字塔四个侧面
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    glDrawArrays(GL_TRIANGLES, 1, 3);
-    glDrawArrays(GL_TRIANGLES, 2, 3);
-    glDrawArrays(GL_TRIANGLES, 3, 3);
+    {
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, objectTransforms[PYRAMID].position);
+        model = glm::rotate(model, glm::radians(objectTransforms[PYRAMID].rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[PYRAMID].rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        model = glm::rotate(model, glm::radians(objectTransforms[PYRAMID].rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, glm::vec3(objectTransforms[PYRAMID].scale));
+        
+        // 如果是选中的对象，提供视觉反馈
+        if (selectedObject == PYRAMID) {
+            // 设置边界颜色或其他视觉指示
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 1);
+        } else {
+            GLint highlightLoc = glGetUniformLocation(programID, "highlight");
+            glUniform1i(highlightLoc, 0);
+        }
+        
+        GLint modelLoc = glGetUniformLocation(programID, "model");
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        
+        glBindVertexArray(pyramidVAO);
+        glDrawElements(GL_TRIANGLES, 18, GL_UNSIGNED_INT, 0);
+    }
     
     glBindVertexArray(0);
     
@@ -373,33 +511,38 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
 
 // 添加处理输入的函数
 void processInput(float deltaTime) {
+    if (selectedObject == NONE)
+        return;
+    
+    ObjectTransform& transform = objectTransforms[selectedObject];
+    
     // 平移控制
     if (keys.w)
-        objectPosition.z -= moveSpeed * deltaTime;
+        transform.position.z -= moveSpeed * deltaTime;
     if (keys.s)
-        objectPosition.z += moveSpeed * deltaTime;
+        transform.position.z += moveSpeed * deltaTime;
     if (keys.a)
-        objectPosition.x -= moveSpeed * deltaTime;
+        transform.position.x -= moveSpeed * deltaTime;
     if (keys.d)
-        objectPosition.x += moveSpeed * deltaTime;
+        transform.position.x += moveSpeed * deltaTime;
     if (keys.q)
-        objectPosition.y += moveSpeed * deltaTime;
+        transform.position.y += moveSpeed * deltaTime;
     if (keys.e)
-        objectPosition.y -= moveSpeed * deltaTime;
+        transform.position.y -= moveSpeed * deltaTime;
     
     // 旋转控制
     if (keys.up)
-        objectRotation.x += rotateSpeed * deltaTime;
+        transform.rotation.x += rotateSpeed * deltaTime;
     if (keys.down)
-        objectRotation.x -= rotateSpeed * deltaTime;
+        transform.rotation.x -= rotateSpeed * deltaTime;
     if (keys.left)
-        objectRotation.y -= rotateSpeed * deltaTime;
+        transform.rotation.y -= rotateSpeed * deltaTime;
     if (keys.right)
-        objectRotation.y += rotateSpeed * deltaTime;
+        transform.rotation.y += rotateSpeed * deltaTime;
     if (keys.z)
-        objectRotation.z += rotateSpeed * deltaTime;
+        transform.rotation.z += rotateSpeed * deltaTime;
     if (keys.x)
-        objectRotation.z -= rotateSpeed * deltaTime;
+        transform.rotation.z -= rotateSpeed * deltaTime;
     
     // 缩放控制 - 平滑缓冲效果
     float targetVelocity = 0.0f;
@@ -412,8 +555,8 @@ void processInput(float deltaTime) {
     currentVelocity += (targetVelocity - currentVelocity) * smoothness * deltaTime;
     
     // 应用缩放
-    objectScale += currentVelocity * deltaTime;
-    objectScale = glm::clamp(objectScale, 0.1f, 10.0f); // 限制缩放范围
+    transform.scale += currentVelocity * deltaTime;
+    transform.scale = glm::clamp(transform.scale, 0.1f, 10.0f); // 限制缩放范围
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -449,23 +592,36 @@ void renderControlInstructions() {
     
     // 创建一个窗口显示控制说明
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(350, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(350, 220), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control Instructions", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     
-    ImGui::Text("Movement Controls:");
+    // 添加选择提示（重要！）
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "FIRST: Click on an object to select it!");
+    
+    // 显示当前选择状态
+    if (selectedObject == NONE) {
+        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "No object selected");
+    } else {
+        const char* objNames[] = { "Square", "Cube", "Pyramid" };
+        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "Selected: %s", objNames[selectedObject]);
+    }
+    
+    ImGui::Separator();
+    
+    ImGui::Text("Movement Controls (after selection):");
     ImGui::BulletText("W/S - Forward/Backward");
     ImGui::BulletText("A/D - Left/Right");
     ImGui::BulletText("Q/E - Up/Down");
     
     ImGui::Separator();
     
-    ImGui::Text("Rotation Controls:");
+    ImGui::Text("Rotation Controls (after selection):");
     ImGui::BulletText("Arrow Keys - Rotate around X/Y axis");
     ImGui::BulletText("Z/X - Rotate around Z axis");
     
     ImGui::Separator();
     
-    ImGui::Text("Scale Controls:");
+    ImGui::Text("Scale Controls (after selection):");
     ImGui::BulletText("+/- - Scale up/down");
     
     ImGui::End();
@@ -505,6 +661,7 @@ int main(int argc, char* argv[]) {
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetKeyCallback(window, key_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback); // 添加鼠标回调
 
     /* Initialize the glew */
     if (GLEW_OK != glewInit()) {

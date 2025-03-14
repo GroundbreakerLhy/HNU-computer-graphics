@@ -14,12 +14,11 @@ Type your name and student ID here
 #include <iostream>
 #include <fstream>
 
-// 添加ImGui相关头文件
 #include "../imgui/imgui.h"
 #include "../imgui/backends/imgui_impl_glfw.h"
 #include "../imgui/backends/imgui_impl_opengl3.h"
 
-// 全局变量 - 对象变换控制
+// 对象变换控制
 GLint programID;
 
 // 添加选中对象状态跟踪
@@ -53,7 +52,7 @@ ObjectTransform objectTransforms[3] = {
 // 对象VAO ID
 GLuint squareVAO, cubeVAO, pyramidVAO;
 
-// 添加键盘状态跟踪变量
+// 键盘状态跟踪变量
 struct {
     bool w, s, a, d, q, e;          // 平移键
     bool up, down, left, right;     // 旋转键
@@ -66,15 +65,18 @@ float moveSpeed = 2.0f;         // 每秒移动单位
 float rotateSpeed = 60.0f;      // 每秒旋转角度
 float scaleSpeed = 0.5f;        // 每秒缩放系数
 float currentVelocity = 0.0f;   // 当前速度
-float smoothness = 5.0f;        // 平滑系数，越大越平滑
+float smoothness = 5.0f;        // 平滑系数
 
 // 上一帧时间
 float lastFrameTime = 0.0f;
 
-// 全局变量 - 添加窗口变量
-GLFWwindow* window; // 将window声明为全局变量
+// 窗口变量
+GLFWwindow* window;
 
-// 函数声明
+// 添加鼠标拖动状态跟踪
+bool isDragging = false;
+double lastMouseX, lastMouseY;
+
 void get_OpenGL_info() {
     // OpenGL information
     const GLubyte* name = glGetString(GL_VENDOR);
@@ -134,11 +136,9 @@ void installShaders() {
     GLuint fragmentShaderID = glCreateShader(GL_FRAGMENT_SHADER);
 
     const GLchar* adapter[1];
-    //adapter[0] = vertexShaderCode;
     std::string temp = readShaderCode("VertexShaderCode.glsl");
     adapter[0] = temp.c_str();
     glShaderSource(vertexShaderID, 1, adapter, 0);
-    //adapter[0] = fragmentShaderCode;
     temp = readShaderCode("FragmentShaderCode.glsl");
     adapter[0] = temp.c_str();
     glShaderSource(fragmentShaderID, 1, adapter, 0);
@@ -164,7 +164,6 @@ void installShaders() {
 }
 
 void sendDataToOpenGL() {
-    // 启用深度测试
     glEnable(GL_DEPTH_TEST);
     
     // 1. 创建2D矩形（使用索引绘制）
@@ -301,12 +300,12 @@ void sendDataToOpenGL() {
     glBindVertexArray(0);
 }
 
-void renderControlInstructions(); // 添加前置声明
+void renderControlInstructions();
 
 // 射线-物体相交检测
 bool checkRayObjIntersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir, 
                             const glm::vec3& objPos, float objScale, float& distance) {
-    // 简化的碰撞箱检测
+    // 碰撞箱检测
     float radius = objScale * 0.5f;
     glm::vec3 oc = rayOrigin - objPos;
     
@@ -323,55 +322,90 @@ bool checkRayObjIntersection(const glm::vec3& rayOrigin, const glm::vec3& rayDir
     }
 }
 
-// 添加鼠标点击回调
+// 鼠标点击回调
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-        // 获取鼠标在窗口中的位置
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
-        
-        // 将屏幕坐标转换为NDC坐标
-        int width, height;
-        glfwGetWindowSize(window, &width, &height);
-        
-        float x = (2.0f * xpos) / width - 1.0f;
-        float y = 1.0f - (2.0f * ypos) / height;
-        
-        // 创建从屏幕到世界的射线
-        glm::vec4 rayClip = glm::vec4(x, y, -1.0f, 1.0f);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 20.0f);
-        glm::mat4 view = glm::mat4(1.0f);
-        
-        glm::vec4 rayEye = glm::inverse(projection) * rayClip;
-        rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0f, 0.0f);
-        
-        glm::vec3 rayWorld = glm::vec3(glm::inverse(view) * rayEye);
-        rayWorld = glm::normalize(rayWorld);
-        
-        glm::vec3 rayOrigin = glm::vec3(0.0f, 0.0f, 0.0f);
-        
-        // 检测射线与每个对象的相交
-        float minDist = FLT_MAX;
-        int closestObj = -1;
-        
-        for (int i = 0; i < 3; i++) {
-            float dist;
-            if (checkRayObjIntersection(rayOrigin, rayWorld, objectTransforms[i].position, 
-                                        objectTransforms[i].scale, dist)) {
-                if (dist < minDist) {
-                    minDist = dist;
-                    closestObj = i;
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            // 获取鼠标在窗口中的位置
+            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+            
+            // 将屏幕坐标转换为NDC坐标
+            int width, height;
+            glfwGetWindowSize(window, &width, &height);
+            
+            float x = (2.0f * xpos) / width - 1.0f;
+            float y = 1.0f - (2.0f * ypos) / height;
+            
+            // 创建从屏幕到世界的射线
+            glm::vec4 rayClip = glm::vec4(x, y, -1.0f, 1.0f);
+            glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 20.0f);
+            glm::mat4 view = glm::mat4(1.0f);
+            
+            glm::vec4 rayEye = glm::inverse(projection) * rayClip;
+            rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0f, 0.0f);
+            
+            glm::vec3 rayWorld = glm::vec3(glm::inverse(view) * rayEye);
+            rayWorld = glm::normalize(rayWorld);
+            
+            glm::vec3 rayOrigin = glm::vec3(0.0f, 0.0f, 0.0f);
+            
+            // 检测射线与每个对象的相交
+            float minDist = FLT_MAX;
+            int closestObj = -1;
+            
+            for (int i = 0; i < 3; i++) {
+                float dist;
+                if (checkRayObjIntersection(rayOrigin, rayWorld, objectTransforms[i].position, 
+                                            objectTransforms[i].scale, dist)) {
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closestObj = i;
+                    }
                 }
             }
+            
+            // 更新选中的对象
+            selectedObject = (closestObj >= 0) ? static_cast<SelectedObject>(closestObj) : NONE;
+            
+            // 如果选中了对象，开始拖动
+            if (selectedObject != NONE) {
+                isDragging = true;
+                lastMouseX = xpos;
+                lastMouseY = ypos;
+            }
+        } else if (action == GLFW_RELEASE) {
+            // 释放鼠标，停止拖动
+            isDragging = false;
         }
+    }
+}
+
+// 添加鼠标移动回调函数
+void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
+    if (isDragging && selectedObject != NONE) {
+        // 计算鼠标移动距离
+        float dx = xpos - lastMouseX;
+        float dy = lastMouseY - ypos; // 反转Y轴
         
-        // 更新选中的对象
-        selectedObject = (closestObj >= 0) ? static_cast<SelectedObject>(closestObj) : NONE;
+        // 计算移动敏感度
+        float sensitivity = 0.01f;
+        
+        // 移动选中的对象
+        ObjectTransform& transform = objectTransforms[selectedObject];
+        
+        // X和Y平面上的移动
+        transform.position.x += dx * sensitivity;
+        transform.position.y += dy * sensitivity;
+        
+        // 更新鼠标位置
+        lastMouseX = xpos;
+        lastMouseY = ypos;
     }
 }
 
 void paintGL(void) {
-    // 清除颜色缓冲和深度缓冲
+    
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
@@ -471,7 +505,6 @@ void paintGL(void) {
 
 // 修改key_callback函数来跟踪按键状态
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    // ESC键关闭窗口
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
     
@@ -509,7 +542,7 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         keys.minus = (action == GLFW_PRESS || action == GLFW_REPEAT);
 }
 
-// 添加处理输入的函数
+// 处理输入的函数
 void processInput(float deltaTime) {
     if (selectedObject == NONE)
         return;
@@ -544,14 +577,14 @@ void processInput(float deltaTime) {
     if (keys.x)
         transform.rotation.z -= rotateSpeed * deltaTime;
     
-    // 缩放控制 - 平滑缓冲效果
+    // 缩放控制
     float targetVelocity = 0.0f;
     if (keys.plus)
         targetVelocity = scaleSpeed;
     else if (keys.minus)
         targetVelocity = -scaleSpeed;
     
-    // 平滑插值计算当前速度
+    // 计算当前速度
     currentVelocity += (targetVelocity - currentVelocity) * smoothness * deltaTime;
     
     // 应用缩放
@@ -565,14 +598,12 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
 
 // 在initializedGL函数中添加ImGui初始化
 void initializedGL(void) {
-    // run only once
     sendDataToOpenGL();
     installShaders();
     
     // 初始化ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    // ImGuiIO& io = ImGui::GetIO(); // 注释掉未使用的变量或使用(void)io;消除警告
     
     // 设置ImGui样式
     ImGui::StyleColorsDark();
@@ -592,10 +623,10 @@ void renderControlInstructions() {
     
     // 创建一个窗口显示控制说明
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(350, 220), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(350, 240), ImGuiCond_FirstUseEver);
     ImGui::Begin("Control Instructions", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     
-    // 添加选择提示（重要！）
+    // 选择提示
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "FIRST: Click on an object to select it!");
     
     // 显示当前选择状态
@@ -612,6 +643,7 @@ void renderControlInstructions() {
     ImGui::BulletText("W/S - Forward/Backward");
     ImGui::BulletText("A/D - Left/Right");
     ImGui::BulletText("Q/E - Up/Down");
+    ImGui::BulletText("Mouse Drag - Move in X/Y plane");
     
     ImGui::Separator();
     
@@ -632,12 +664,10 @@ void renderControlInstructions() {
 }
 
 int main(int argc, char* argv[]) {
-    /* Initialize the glfw */
     if (!glfwInit()) {
         std::cout << "Failed to initialize GLFW" << std::endl;
         return -1;
     }
-    /* glfw: configure; necessary for MAC */
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -646,24 +676,21 @@ int main(int argc, char* argv[]) {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    /* do not allow resizing */
     glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
 
-    /* Create a windowed mode window and its OpenGL context */
-    window = glfwCreateWindow(800, 600, "Assignment 1", NULL, NULL);
+    window = glfwCreateWindow(1200, 900, "Assignment 1", NULL, NULL);
     if (!window) {
         std::cout << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
         return -1;
     }
 
-    /* Make the window's context current */
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetKeyCallback(window, key_callback);
-    glfwSetMouseButtonCallback(window, mouse_button_callback); // 添加鼠标回调
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, mouse_callback);
 
-    /* Initialize the glew */
     if (GLEW_OK != glewInit()) {
         std::cout << "Failed to initialize GLEW" << std::endl;
         return -1;
@@ -671,26 +698,16 @@ int main(int argc, char* argv[]) {
     get_OpenGL_info();
     initializedGL();
 
-    // 初始化按键状态
     memset(&keys, 0, sizeof(keys));
     
-    /* Loop until the user closes the window */
     while (!glfwWindowShouldClose(window)) {
-        /* 计算时间差 */
         float currentTime = glfwGetTime();
         float deltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
         
-        /* 处理输入 */
         processInput(deltaTime);
-        
-        /* Render here */
         paintGL();
-
-        /* Swap front and back buffers */
         glfwSwapBuffers(window);
-
-        /* Poll for and process events */
         glfwPollEvents();
     }
 

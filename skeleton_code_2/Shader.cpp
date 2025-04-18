@@ -1,11 +1,10 @@
 #include "Shader.h"
-#include "Dependencies/glm/gtc/type_ptr.hpp"
+#include <glm/gtc/type_ptr.hpp>
 
 #include <fstream>
 
 void Shader::setupShader(const char* vertexPath, const char* fragmentPath)
 {
-	// similar to the installShaders() in the assignment 1
 	unsigned int vertexShaderID = glCreateShader(GL_VERTEX_SHADER);
 	unsigned int fragmentShaderID = glCreateShader(GL_FRAGMENT_SHADER);
 

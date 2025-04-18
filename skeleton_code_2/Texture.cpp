@@ -1,16 +1,14 @@
 #include "Texture.h"
 
-#include "Dependencies/glew/glew.h"
+#include <GL/glew.h>
 #define STB_IMAGE_IMPLEMENTATION
-#include "Dependencies/stb_image/stb_image.h"
+#include "../Dependencies/stb_image/stb_image.h"
 
 #include <iostream>
 
 void Texture::setupTexture(const char* texturePath)
 {
-	// tell stb_image.h to flip loaded texture's on the y-axis.
 	stbi_set_flip_vertically_on_load(true);
-	// load the texture data into "data"
 	unsigned char* data = stbi_load(texturePath, &Width, &Height, &BPP, 0);
 	GLenum format=3;
 	switch (BPP) {
@@ -22,12 +20,9 @@ void Texture::setupTexture(const char* texturePath)
 	glGenTextures(1, &ID);
 	glBindTexture(GL_TEXTURE_2D, ID);
 
-	// set the texture wrapping parameters
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	// set texture filtering parameters
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	
 	if (data) {

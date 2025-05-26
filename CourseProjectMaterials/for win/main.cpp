@@ -126,7 +126,7 @@ Model loadOBJ(const char* objPath)
             std::getline(file, line);
             
             // 跳过空行
-            if (line.empty() || line.find_first_not_of(" \t") == std::string::npos) {
+            if (line.empty() || line.find_first_not_of(" \r") == std::string::npos) {
                 continue;
             }
             
